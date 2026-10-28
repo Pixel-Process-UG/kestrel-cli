@@ -1,0 +1,61 @@
+name: Kestrel Shot
+description: Screenshot web pages in CI with headless Chrome (no screen needed).
+branding:
+  icon: camera
+  color: orange
+
+inputs:
+  urls:
+    description: URLs or local HTML files, separated by spaces or newlines.
+    required: true
+  args:
+    description: Extra `kestrel shot` options, e.g. `--full-page --viewport 390x844 --viewport 1440x900`.
+    default: ""
+  out:
+    description: Output directory.
+    default: screenshots
+  version:
+    description: Release tag to install (e.g. v0.1.0). Empty = the action's own ref if it is a tag, else latest.
+    default: ""
+
+outputs:
+  json:
+    description: JSON array of {url, viewport, path} or {url, viewport, error}.
+    value: ${{ steps.shot.outputs.json }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install kestrel
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        VERSION: ${{ inputs.version || (startsWith(github.action_ref, 'v') && github.action_ref || '') }}
+      run: |
+        case "${{ runner.os }}-${{ runner.arch }}" in
+          Linux-X64) asset=kestrel-linux-x64 ;;
+          Linux-ARM64) asset=kestrel-linux-arm64 ;;
+          macOS-*) asset=kestrel-macos ;;
+          Windows-X64) asset=kestrel-windows-x64.exe ;;
+          *) echo "::error::unsupported runner ${{ runner.os }}-${{ runner.arch }}"; exit 1 ;;
+        esac
+        dir="$RUNNER_TEMP/kestrel-bin"
+        mkdir -p "$dir"
+        gh release download $VERSION --repo Pixel-Process-UG/kestrel-cli --pattern "$asset" --dir "$dir" --clobber
+        bin="$dir/kestrel"; [[ "$asset" == *.exe ]] && bin="$bin.exe"
+        mv "$dir/$asset" "$bin" && chmod +x "$bin"
+        echo "$dir" >> "$GITHUB_PATH"
+
+    - name: Capture
+      id: shot
+      shell: bash
+      env:
+        URLS: ${{ inputs.urls }}
+        ARGS: ${{ inputs.args }}
+        OUT: ${{ inputs.out }}
+      run: |
+        # Word-splitting is intended: URLs and args are space/newline separated.
+        json="$(kestrel shot $URLS $ARGS -o "$OUT" --json)" || status=$?
+        echo "json=$json" >> "$GITHUB_OUTPUT"
+        echo "$json"
+        exit "${status:-0}"

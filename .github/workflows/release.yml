@@ -1,0 +1,62 @@
+name: Release
+
+# Push a tag like v0.1.0: builds the binaries and publishes a release with them. Asset names are
+# what action.yml and the README install lines download.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.asset }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, asset: kestrel-linux-x64, bin: kestrel }
+          - { os: ubuntu-24.04-arm, asset: kestrel-linux-arm64, bin: kestrel }
+          - { os: windows-latest, asset: kestrel-windows-x64.exe, bin: kestrel.exe }
+          - { os: macos-latest, asset: kestrel-macos, bin: kestrel, universal: true }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.universal && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        shell: bash
+        run: |
+          if [ "${{ matrix.universal }}" = true ]; then
+            cargo build --release --target aarch64-apple-darwin
+            cargo build --release --target x86_64-apple-darwin
+            lipo -create -output "${{ matrix.asset }}" target/{aarch64,x86_64}-apple-darwin/release/kestrel
+          else
+            cargo build --release
+            cp "target/release/${{ matrix.bin }}" "${{ matrix.asset }}"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "${{ github.ref_name }}" kestrel-* --repo "${{ github.repository }}" --title "kestrel ${{ github.ref_name }}" --generate-notes
